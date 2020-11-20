@@ -1,59 +1,59 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <unistd.h>
+#include <string.h>
 
-#include <poll.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/ioctl.h>
+#include <linux/if.h>
+#include <linux/can.h>
+#include <linux/can/raw.h>
 
-#include "../can/can_controller.h"
-#include "../can/can_protocol.h"
+#include <libsocketcan.h>
 
 int main (int argc, char *argv[]){
 
-    int c, can_socket;
-    struct can_interface *cif;
-    struct can_protocol can_prot = {};
+    int s;
+    int nbytes;
+    struct ifreq ifr;
+    struct sockaddr_can addr;
+    struct can_frame frame;
 
-    // will set up remotely
-    char *ifname = "vcan0";
-    int bitrate = 250000;
-
-    struct pollfd poll_events[1] = { 0 };
-    int poll_res, timeout, nbytes;
-    int wbytes;
-    
-    cif = can_create_interface(ifname, 250000);
-    
-    c = can_interface_start(cif);
-    if (c < 0){
-        perror("error while start can");
-        exit(-1);
+    s = socket(PF_CAN,SOCK_RAW, CAN_RAW);
+    if (s < 0){
+        perror("socket");
+        return 1;
     }
 
-    //can_socket = can_create_socket(cif);
-    can_prot.can_socket = can_create_socket(cif);
+    strcpy(ifr.ifr_name, "vcan0");
+    ioctl(s, SIOCGIFINDEX, &ifr);
 
-    poll_events[0].fd = can_prot.can_socket;
-    poll_events[0].events = POLLIN;
+    memset(&addr, 0, sizeof(addr));
+    addr.can_family = AF_CAN;
+    addr.can_ifindex = ifr.ifr_ifindex;
 
-    timeout = 1000;
-
-    for (;;){
-
-        poll_res = poll(poll_events, 1, timeout);
-
-        if(poll_res < 0){
-            perror("Something wrong while trying to run the poll on can");
-            return -1;
-        }
-
-        if(poll_events[0].revents & POLLIN) {
-            poll_events[0].revents = 0;
-            
-            nbytes = can_recv(&can_prot);
-        }
-
-        // echo reply
-        wbytes = can_send(&can_prot);
-
+    if(bind(s, (struct sockaddr *)&addr, sizeof(addr)) < 0){
+        perror("bind");
+        return 1;
     }
+
+    nbytes = read(s, &frame, sizeof(struct can_frame));
+
+    if (nbytes < 0){
+        perror("read");
+        return 1;
+    }
+
+    printf("0x%03X [%d] ",frame.can_id, frame.can_dlc);
+    for (int i = 0; i < frame.can_dlc; i++)
+        printf("%02X ",frame.data[i]);
+    printf("\r\n");
+
+    if (close(s) < 0) {
+        perror("close");
+        return 1;
+    }
+
 }
